@@ -41,16 +41,18 @@ train, test = train_test_split(df, test_size=0.2, random_state=42)
 #print(test)
 model = LogisticRegression()
 
-X_train = train.iloc[:, 1:]
-y_train = train.iloc[:,-1]
-X_test = test.iloc[:, 1:]
-y_test = test.iloc[:,-1]
+X_train = train.iloc[:, 0:-1]
+y_train = train['pullrequestDecision']
+X_test = test.iloc[:, 0:-1]
+y_test = test['pullrequestDecision']
 
-print(X_train)
-print(y_train)
-model.fit(X=X_train,y=y_train)
+print(X_test.head())
+print(y_test.head())
+print(model.fit(X=X_train,y=y_train))
 
 y_pred = model.predict(X_test)
+#print(model.get_params())
+
 
 print("Accuracy:",metrics.accuracy_score(y_test, y_pred))
 print("Precision:",metrics.precision_score(y_test, y_pred))
@@ -59,7 +61,7 @@ print("Recall:",metrics.recall_score(y_test, y_pred))
 importance = model.coef_[0]
 
 for i,v in enumerate(importance):
-    print('Feature: %s, Score: %.5f' % (columns[i],v))
+    print('%s & %.5f \\\\' % (columns[i],v))
 
 
 model = RandomForestClassifier()
