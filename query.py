@@ -2,9 +2,12 @@ import json
 import datetime
 import requests
 import time
-import pickle
 
 api_requests = 0
+
+API_LIMIT = 20
+
+RESET_TIME = 10
 
 DOWNLOAD_BASE_PATH = 'D:\\CS846-Mei\\Project\\data\\'
 DECOMPRESSED_FOLDER = 'decompressed\\'
@@ -31,15 +34,13 @@ def external_request(url):
     global api_requests
     api_requests = api_requests + 1
     response = requests.get(url, auth=(USERNAME, API_TOKEN))
-    if response.ok:
-        pass
-    else:
-        rate_limit()
+    if not response.ok:
+        print('Api Request :' + str(api_requests) + 'is not ok!')
     return response
 
-def rate_limit():
+def rate_remaining():
     response = requests.get('https://api.github.com/rate_limit', auth=(USERNAME, API_TOKEN))
-    print(response.json()['rate'])
+    return response.json()['rate']['remaining']
 
 # These are the criteria for repo selection:
 #     - Min One closed pull request
@@ -128,18 +129,53 @@ def generatePRDataset(datetime_date, number_of_days, repo_path):
         x += datetime.timedelta(days=1)
     fp_repo.close()
 
+# takes alot of API calls (depending on number of commits) not completing it for this version
+def testsPresent(data):
+    commits_url = data['payload']['pull_request']['commits_url']
+    response = external_request(commits_url)
 
 
+def technicalContribution(data):
+    testIncluded = 0
+    PRBodySize = len(data['payload']['pull_request']['body'])
+    CommitSize = data['payload']['pull_request']['additions'] + data['payload']['pull_request']['deletions']
+    No_of_Files_Changed = data['payload']['pull_request']['changed_files']
+    return (testIncluded, PRBodySize, CommitSize, No_of_Files_Changed)
+
+def sDistance(data):
+    followers_url = data['payload']['pull_request']['merged_by']['followers_url']
+    user = data['payload']['pull_request']['user']
+    response = external_request(followers_url)
+    if response.ok:
+        followersList = response.json()
+        for follower in followersList:
+            if user == follower['login']:
+                return 1
+    return 0
+
+
+def socialConnection(data):
+    socialDistance = sDistance(data)
+    # Need to implement prior interaction later
+    priorInteraction = 0
 # Need to generate a list  [TestIncluded, CommitSize, No_of_Files_Changes,
 #                           Social_distance, Prior_interaction, No_of_Comments,
 #                           No_of_followers_Submitter, Submitter_Status, Repository_age,
 #                           No_of_Collaborators, No_of_Stars, PR_Decision]
-def create_record(record):
+def create_record(data):
 
-    # commitInfo(record) takes 2 API requests
-    testIncluded , commitSize, filesChanged = commitInfo(record)
-    #
+    # technicalContribution(record) take a total 2 API calls
+    testIncluded, PRBodySize, CommitSize, No_of_Files_Changed = technicalContribution(data)
+    # socialConnection take a total of 2 API calls
+    socialDistance, priorInteraction = socialConnection(data)
+    # pullrequestFeatures take a total of 0 API calls
+    No_of_Comments, timeSpentOnPR = pullrequestFeatures(data)
+    # repoFeatures take a total of 1 API calls
+    repositoryAge, No_of_collaborators, No_of_Stars, collaboratorList = repoFeatures(data)
+    # submitterFeature takes a total of 1 API calls
+    No_of_followers_Submitter, submitterStatus = submitterFeatures(data, collaboratorList)
 
+    pullrequestDecision = isMerged(data)
 
 
 
@@ -150,7 +186,6 @@ start_date = datetime.datetime(2015,1,1)
 # print('Number of records: ' + str(n_records))
 #generateRepoList(start_date, 10, "10_days_repoList" + J_EXTENSION)
 generatePRDataset(start_date, 10, "10_days_repoList" + J_EXTENSION)
-rate_limit()
 print("time elapsed: {:.2f}s".format(time.time() - start_time))
 
 # for a in range(100):
