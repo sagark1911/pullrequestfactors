@@ -2,7 +2,7 @@ import json
 import datetime
 import requests
 import time
-
+import pandas as pd
 api_requests = 0
 
 API_LIMIT = 20
@@ -33,6 +33,9 @@ def prettyPrint(json_object):
 def external_request(url):
     global api_requests
     api_requests = api_requests + 1
+    if rate_remaining() < 10:
+        print("going to sleep for an hour to replenish my rate limit")
+        time.sleep(3660)
     response = requests.get(url, auth=(USERNAME, API_TOKEN))
     if not response.ok:
         print('Api Request :' + str(api_requests) + 'is not ok!\n' + response.text)
@@ -103,6 +106,11 @@ def generateRepoList(datetime_date, number_of_days, save_path):
     with open(save_path, "w") as fp:
         fp.write(json.dumps(validRepository))
 
+def save_records(records, extension):
+    columns = ['PRBodySize', 'CommitSize', 'No_of_Files_Changed', 'socialDistance', 'No_of_Comments', 'timeSpentOnPR', 'repositoryAge','No_of_collaborators', 'No_of_Stars', 'No_of_Watchers', 'No_of_OpenIssues', 'No_of_followers_Submitter', 'submitterStatus', 'pullrequestDecision']
+    df = pd.DataFrame.from_records(records, columns=columns)
+    df.to_csv('trial-dataset\\' + 'records'+ extension + '.csv')
+
 
 def generatePRDataset(datetime_date, number_of_days, repo_list_filepath):
     x = datetime_date
@@ -124,27 +132,29 @@ def generatePRDataset(datetime_date, number_of_days, repo_list_filepath):
                         #exit(42)
                         if str(data['repo']['id']) in repo_dict:
                             #print("Repo is a match")
-                            if data['type'] == 'PullRequestEvent' and data['payload']['action'] == 'closed' :
+                            if data['type'] == 'PullRequestEvent' and data['payload']['action'] == 'closed':
                                 # We can ignore cases where user closes their own pull request
-                                if data['actor']['id'] == data['payload']['pull_request']['user']['id'] and data['payload']['pull_request']['merged'] == False:
-                                    continue
-                                else:
-                                    #print("Match")
-                                    records.append(create_record(data))
-                        if len(records) == 10:
+                                if data['payload']['pull_request']['user'] != None:
+                                    if data['payload']['pull_request']['base']['repo']['fork'] == True:
+                                        continue
+                                    if data['actor']['id'] == data['payload']['pull_request']['user']['id'] and data['payload']['pull_request']['merged'] == False:
+                                        continue
+                                    else:
+                                        #print("Match")
+                                        records.append(create_record(data))
+                                        if len(records) % 20 == 1:
+                                            print("time elapsed: {:.2f}s".format(time.time() - start_time))
+                        if len(records) == 1200:
                             save_records((records))
                             print("Remaining API calls" + str(rate_remaining()))
                             exit(42)
+
             except FileNotFoundError:
                 print(fileLocation + ' : This file does not seem to exist.')
             except Exception:
                 prettyPrint(data)
                 raise('Something went wrong. ' + Exception.args[1])
-            if len(records) > 10:
-                print(records)
-                print("Remaining API calls" + str(rate_remaining()))
-                exit(42)
-            print('Not matching?')
+            save_records(records, str(hr))
         x += datetime.timedelta(days=1)
     fp_repo.close()
 
@@ -156,7 +166,10 @@ def testsPresent(data):
 
 def technicalContribution(data):
     testIncluded = 0
-    PRBodySize = len(data['payload']['pull_request']['body'])
+    if data['payload']['pull_request']['body'] == None:
+        PRBodySize = 0
+    else:
+        PRBodySize = len(data['payload']['pull_request']['body'])
     CommitSize = data['payload']['pull_request']['additions'] + data['payload']['pull_request']['deletions']
     No_of_Files_Changed = data['payload']['pull_request']['changed_files']
     return testIncluded, PRBodySize, CommitSize, No_of_Files_Changed
@@ -178,7 +191,7 @@ def sDistance(data):
     return 0
 
 def socialConnection(data):
-
+    # Seems to always return 0
     socialDistance = sDistance(data)
     # Need to implement prior interaction later
     priorInteraction = 0
@@ -196,7 +209,6 @@ def pullrequestFeatures(data):
 def repoFeatures(data, timePRcreated):
     repo_created = datetime.datetime.strptime(data['payload']['pull_request']['base']['repo']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
     pr_created = datetime.datetime.strptime(timePRcreated, "%Y-%m-%dT%H:%M:%SZ")
-
     repo_age_delta = pr_created - repo_created
     repositoryAge = repo_age_delta.days
 
@@ -207,6 +219,7 @@ def repoFeatures(data, timePRcreated):
         No_of_contributors = len(repo_contributors_list)
     else:
         No_of_contributors = -1
+        repo_contributors_list = []
     No_of_Stars = data['payload']['pull_request']['base']['repo']['stargazers_count']
     No_of_Watchers = data['payload']['pull_request']['base']['repo']['watchers_count']
     No_of_OpenIssues = data['payload']['pull_request']['base']['repo']['open_issues_count']
@@ -261,7 +274,7 @@ def create_record(data):
     No_of_followers_Submitter, submitterStatus = submitterFeatures(data, collaboratorList)
 
     pullrequestDecision = isMerged(data)
-    print([PRBodySize, CommitSize, No_of_Files_Changed, socialDistance, No_of_Comments, timeSpentOnPR, repositoryAge, No_of_collaborators, No_of_Stars, No_of_Watchers, No_of_OpenIssues, No_of_followers_Submitter, submitterStatus, pullrequestDecision])
+    #print([PRBodySize, CommitSize, No_of_Files_Changed, socialDistance, No_of_Comments, timeSpentOnPR, repositoryAge, No_of_collaborators, No_of_Stars, No_of_Watchers, No_of_OpenIssues, No_of_followers_Submitter, submitterStatus, pullrequestDecision])
     return [PRBodySize, CommitSize, No_of_Files_Changed, socialDistance, No_of_Comments, timeSpentOnPR, repositoryAge, No_of_collaborators, No_of_Stars, No_of_Watchers, No_of_OpenIssues, No_of_followers_Submitter, submitterStatus, pullrequestDecision]
 
 
