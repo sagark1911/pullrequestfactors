@@ -35,7 +35,8 @@ def external_request(url):
     api_requests = api_requests + 1
     response = requests.get(url, auth=(USERNAME, API_TOKEN))
     if not response.ok:
-        print('Api Request :' + str(api_requests) + 'is not ok!')
+        print('Api Request :' + str(api_requests) + 'is not ok!\n' + response.text)
+        print("Tried URL: " + url)
     return response
 
 def rate_remaining():
@@ -103,9 +104,9 @@ def generateRepoList(datetime_date, number_of_days, save_path):
         fp.write(json.dumps(validRepository))
 
 
-def generatePRDataset(datetime_date, number_of_days, repo_path):
+def generatePRDataset(datetime_date, number_of_days, repo_list_filepath):
     x = datetime_date
-    fp_repo = open(repo_path, 'r')
+    fp_repo = open(repo_list_filepath, 'r')
     repo_dict = json.loads(fp_repo.read())
     #print(repo_dict)
     #print(str(sum(repo_dict.values())))
@@ -119,13 +120,31 @@ def generatePRDataset(datetime_date, number_of_days, repo_path):
                 with open(fileLocation, encoding="utf8") as json_file:
                     for json_record in json_file.readlines():
                         data = json.loads(json_record)
-                        if data['repo']['id'] in repo_dict:
-                            records.append(create_record(data))
+                        #print(data)
+                        #exit(42)
+                        if str(data['repo']['id']) in repo_dict:
+                            #print("Repo is a match")
+                            if data['type'] == 'PullRequestEvent' and data['payload']['action'] == 'closed' :
+                                # We can ignore cases where user closes their own pull request
+                                if data['actor']['id'] == data['payload']['pull_request']['user']['id'] and data['payload']['pull_request']['merged'] == False:
+                                    continue
+                                else:
+                                    #print("Match")
+                                    records.append(create_record(data))
+                        if len(records) == 10:
+                            save_records((records))
+                            print("Remaining API calls" + str(rate_remaining()))
+                            exit(42)
             except FileNotFoundError:
                 print(fileLocation + ' : This file does not seem to exist.')
             except Exception:
                 prettyPrint(data)
                 raise('Something went wrong. ' + Exception.args[1])
+            if len(records) > 10:
+                print(records)
+                print("Remaining API calls" + str(rate_remaining()))
+                exit(42)
+            print('Not matching?')
         x += datetime.timedelta(days=1)
     fp_repo.close()
 
@@ -140,24 +159,90 @@ def technicalContribution(data):
     PRBodySize = len(data['payload']['pull_request']['body'])
     CommitSize = data['payload']['pull_request']['additions'] + data['payload']['pull_request']['deletions']
     No_of_Files_Changed = data['payload']['pull_request']['changed_files']
-    return (testIncluded, PRBodySize, CommitSize, No_of_Files_Changed)
+    return testIncluded, PRBodySize, CommitSize, No_of_Files_Changed
 
 def sDistance(data):
-    followers_url = data['payload']['pull_request']['merged_by']['followers_url']
+    # followers of the person who closed the pull_request
+    followers_url = data['actor']['url'] + '/followers'
     user = data['payload']['pull_request']['user']
+    if user == None:
+        return 0
     response = external_request(followers_url)
     if response.ok:
         followersList = response.json()
         for follower in followersList:
             if user == follower['login']:
                 return 1
+    else:
+        return -1
     return 0
 
-
 def socialConnection(data):
+
     socialDistance = sDistance(data)
     # Need to implement prior interaction later
     priorInteraction = 0
+    return socialDistance, priorInteraction
+
+def pullrequestFeatures(data):
+    #print('Review comments = ' + str(data['payload']['pull_request']['review_comments'])  + '\nComments = ' + str(data['payload']['pull_request']['comments']))
+    No_of_Comments = data['payload']['pull_request']['review_comments'] + data['payload']['pull_request']['comments']
+    pullrequestCreatedTime =  datetime.datetime.strptime(data['payload']['pull_request']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
+    pullrequestClosedTime =  datetime.datetime.strptime(data['payload']['pull_request']['closed_at'], "%Y-%m-%dT%H:%M:%SZ")
+    differenceDelta =  pullrequestClosedTime - pullrequestCreatedTime
+    timeSpentonPR = differenceDelta.days
+    return No_of_Comments, timeSpentonPR, data['payload']['pull_request']['created_at']
+
+def repoFeatures(data, timePRcreated):
+    repo_created = datetime.datetime.strptime(data['payload']['pull_request']['base']['repo']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
+    pr_created = datetime.datetime.strptime(timePRcreated, "%Y-%m-%dT%H:%M:%SZ")
+
+    repo_age_delta = pr_created - repo_created
+    repositoryAge = repo_age_delta.days
+
+    repo_contributors_url = data['payload']['pull_request']['base']['repo']['contributors_url']
+    response = external_request(repo_contributors_url)
+    if response.ok:
+        repo_contributors_list = response.json()
+        No_of_contributors = len(repo_contributors_list)
+    else:
+        No_of_contributors = -1
+    No_of_Stars = data['payload']['pull_request']['base']['repo']['stargazers_count']
+    No_of_Watchers = data['payload']['pull_request']['base']['repo']['watchers_count']
+    No_of_OpenIssues = data['payload']['pull_request']['base']['repo']['open_issues_count']
+
+    return repositoryAge, No_of_contributors, repo_contributors_list, No_of_Stars, No_of_Watchers, No_of_OpenIssues
+
+
+def submitterFeatures(data, collaboratorList):
+    user = data['payload']['pull_request']['user']
+    No_of_followers_Submitter = 0
+    if user == None:
+        No_of_followers_Submitter = 0
+    elif 'followers_url' in user:
+        user_followers_url = user['followers_url']
+        response = external_request(user_followers_url)
+        if response.ok:
+            user_followers = response.json()
+            No_of_followers_Submitter = len(user_followers)
+        else:
+            No_of_followers_Submitter = -1
+
+    submitterStatus = 0
+    if user == None:
+        submitterStatus = 0
+    elif 'login' in user:
+        for collaborator in collaboratorList:
+            if user['login'] == collaborator['login']:
+                submitterStatus = 1
+    return No_of_followers_Submitter, submitterStatus
+
+def isMerged(data):
+    if data['payload']['pull_request']['merged'] == True:
+        return 1
+    else:
+        return 0
+
 # Need to generate a list  [TestIncluded, CommitSize, No_of_Files_Changes,
 #                           Social_distance, Prior_interaction, No_of_Comments,
 #                           No_of_followers_Submitter, Submitter_Status, Repository_age,
@@ -169,13 +254,15 @@ def create_record(data):
     # socialConnection take a total of 2 API calls
     socialDistance, priorInteraction = socialConnection(data)
     # pullrequestFeatures take a total of 0 API calls
-    No_of_Comments, timeSpentOnPR = pullrequestFeatures(data)
+    No_of_Comments, timeSpentOnPR, timePRcreated = pullrequestFeatures(data)
     # repoFeatures take a total of 1 API calls
-    repositoryAge, No_of_collaborators, No_of_Stars, collaboratorList = repoFeatures(data)
+    repositoryAge, No_of_collaborators, collaboratorList, No_of_Stars, No_of_Watchers, No_of_OpenIssues = repoFeatures(data, timePRcreated)
     # submitterFeature takes a total of 1 API calls
     No_of_followers_Submitter, submitterStatus = submitterFeatures(data, collaboratorList)
 
     pullrequestDecision = isMerged(data)
+    print([PRBodySize, CommitSize, No_of_Files_Changed, socialDistance, No_of_Comments, timeSpentOnPR, repositoryAge, No_of_collaborators, No_of_Stars, No_of_Watchers, No_of_OpenIssues, No_of_followers_Submitter, submitterStatus, pullrequestDecision])
+    return [PRBodySize, CommitSize, No_of_Files_Changed, socialDistance, No_of_Comments, timeSpentOnPR, repositoryAge, No_of_collaborators, No_of_Stars, No_of_Watchers, No_of_OpenIssues, No_of_followers_Submitter, submitterStatus, pullrequestDecision]
 
 
 
