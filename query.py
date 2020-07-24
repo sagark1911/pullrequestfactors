@@ -82,7 +82,6 @@ def explore(datetime_start_date, number_of_days):
     return events, n_records
 
 
-def
 
 
 start_time = time.time()
