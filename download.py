@@ -4,7 +4,6 @@ import datetime
 import time
 
 BASE_URL = 'https://data.gharchive.org/'
-#DOWNLOAD_BASE_PATH = 'C:\\Users\\sagar\\PycharmProjects\\CS846-Mei\\data\\'
 DOWNLOAD_BASE_PATH = 'D:\\CS846-Mei\\Project\\data\\'
 COMPRESSED_FOLDER = 'compressed\\'
 DECOMPRESSED_FOLDER = 'decompressed\\'

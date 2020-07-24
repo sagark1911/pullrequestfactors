@@ -2,6 +2,7 @@ import json
 import datetime
 import requests
 import time
+import pickle
 
 api_requests = 0
 
@@ -40,75 +41,12 @@ def rate_limit():
     response = requests.get('https://api.github.com/rate_limit', auth=(USERNAME, API_TOKEN))
     print(response.json()['rate'])
 
-def explore(datetime_start_date, number_of_days):
-    x = datetime_start_date
-    events = {}
-    n_records = 0
-    pull_request_events = []
-    for a in range(number_of_days):
-        for hr in range(24):
-            myDate = str(x.year) + '-' + string_dates(x.month) + '-' + string_dates(x.day) + '-' + str(hr)
-            fileLocation = DATA_FOLDER + myDate + J_EXTENSION
-            print(fileLocation)
-            try:
-                with open(fileLocation, encoding="utf8") as json_file:
-                    for json_record in json_file.readlines():
-                        n_records += 1
-                        data = json.loads(json_record)
-                        #records.append(data)
-                        if data['type'] == 'PullRequestEvent':
-                            if data['payload']['pull_request']['merged'] == True:
-                                print('merged : True')
-                                if data['payload']['pull_request']['user']['site_admin'] == True:
-                                    prettyPrint(data)
-                                    exit(42)
-                            #print('merged: ' + str(data['payload']['pull_request']['merged']))
-                        if data['type'] not in events:
-                            events[data['type']] = 1
-                            #print(json.dumps(data, indent=2))
-                        else:
-                            events[data['type']] = events[data['type']] + 1
-            except FileNotFoundError:
-                print(fileLocation + ' : This file does not seem to exist.')
-            except TypeError:
-                print()
-            except Exception:
-                prettyPrint(data)
-                raise('Something went wrong. ' + Exception.args[1])
-
-        x += datetime.timedelta(days=1)
-    return events, n_records
-
 # These are the criteria for repo selection:
 #     - Min One closed pull request
 #     - Not a fork
 #     - Min 3 open issues
 #     - Min 3 watchers
 #     - Min 3 forks
-
-# def isValidRepo(repo):
-#     response = external_request(repo['url'])
-#     if not response.ok :
-#         return False
-#         #prettyPrint("REPO : \n" + str(response.json()))
-#     repo_json = response.json()
-#     # Some repositories do not exist anymore
-#     if 'message' in repo_json:
-#         if repo_json['message'] == 'Not Found':
-#             return False
-#     # No forks
-#     if repo_json['fork'] == 'true':
-#         return False
-#     # Min 3 open issues
-#     if repo_json["open_issues_count"] < 3:
-#         return False
-#     # Min 3 contributors
-#     response2 = external_request(repo_json['contributors_url'])
-#     number_of_contributors = len(response2.json())
-#     if number_of_contributors < 3:
-#         return False
-#     # great, now this is valid
-#     return True
 
 def isValidRepo(repo):
     repo_json = repo['payload']['pull_request']['base']['repo']
@@ -126,14 +64,13 @@ def isValidRepo(repo):
 # Generate a list of repositories that meet the selection criteria
 def generateRepoList(datetime_date, number_of_days, save_path):
     x = datetime_date
-    events = {}
     n_records = 0
     validRepository = {}
     for a in range(number_of_days):
         for hr in range(24):
             myDate = str(x.year) + '-' + string_dates(x.month) + '-' + string_dates(x.day) + '-' + str(hr)
             fileLocation = DATA_FOLDER + myDate + J_EXTENSION
-            print(fileLocation)
+            print(myDate)
             try:
                 with open(fileLocation, encoding="utf8") as json_file:
                     for json_record in json_file.readlines():
@@ -153,19 +90,52 @@ def generateRepoList(datetime_date, number_of_days, save_path):
             except Exception:
                 prettyPrint(data)
                 raise('Something went wrong. ' + Exception.args[1])
-            if len(validRepository)%30 == 1:
+            if len(validRepository)%500 == 1:
                 print('Number of repos found : ' + str(len(validRepository)) + '\n' + str(validRepository))
                 print("time elapsed: {:.2f}s".format(time.time() - start_time))
+        x += datetime.timedelta(days=1)
+
     print(validRepository)
     print("Number of valid repositories in " + str(number_of_days) + " days is " + str(len(validRepository)))
+    print("Number of corresponding total pull requests : " + str(sum(validRepository.values())))
+    with open(save_path, "w") as fp:
+        fp.write(json.dumps(validRepository))
+
+
+def generatePRDataset(datetime_date, number_of_days, repo_path):
+    x = datetime_date
+    fp_repo = open(repo_path, 'r')
+    repo_dict = json.loads(fp_repo.read())
+    #print(repo_dict)
+    #print(str(sum(repo_dict.values())))
+    records = []
+    for a in range(number_of_days):
+        for hr in range(24):
+            myDate = str(x.year) + '-' + string_dates(x.month) + '-' + string_dates(x.day) + '-' + str(hr)
+            fileLocation = DATA_FOLDER + myDate + J_EXTENSION
+            print(myDate)
+            try:
+                with open(fileLocation, encoding="utf8") as json_file:
+                    for json_record in json_file.readlines():
+                        data = json.loads(json_record)
+                        if data['repo']['id'] in repo_dict:
+                            records.append(create_record(data))
+            except FileNotFoundError:
+                print(fileLocation + ' : This file does not seem to exist.')
+            except Exception:
+                prettyPrint(data)
+                raise('Something went wrong. ' + Exception.args[1])
+        x += datetime.timedelta(days=1)
+    fp_repo.close()
 
 
 
 # Need to generate a list  [TestIncluded, CommitSize, No_of_Files_Changes,
 #                           Social_distance, Prior_interaction, No_of_Comments,
 #                           No_of_followers_Submitter, Submitter_Status, Repository_age,
-#                           No_of_Collaborators, No_of_Stars]
+#                           No_of_Collaborators, No_of_Stars, PR_Decision]
 def create_record(record):
+
     # commitInfo(record) takes 2 API requests
     testIncluded , commitSize, filesChanged = commitInfo(record)
     #
@@ -178,7 +148,8 @@ start_date = datetime.datetime(2015,1,1)
 # events, n_records = explore(start_date, 15)
 # print(events)
 # print('Number of records: ' + str(n_records))
-generateRepoList(start_date, 1, "blah blah")
+#generateRepoList(start_date, 10, "10_days_repoList" + J_EXTENSION)
+generatePRDataset(start_date, 10, "10_days_repoList" + J_EXTENSION)
 rate_limit()
 print("time elapsed: {:.2f}s".format(time.time() - start_time))
 
