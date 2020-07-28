@@ -33,18 +33,45 @@ def prettyPrint(json_object):
 def external_request(url):
     global api_requests
     api_requests = api_requests + 1
-    if rate_remaining() < 10:
-        print("going to sleep for an hour to replenish my rate limit")
-        time.sleep(3660)
-    response = requests.get(url, auth=(USERNAME, API_TOKEN))
-    if not response.ok:
-        print('Api Request :' + str(api_requests) + 'is not ok!\n' + response.text)
-        print("Tried URL: " + url)
+    while rate_remaining() < 10:
+        print("going to sleep for an 20sec and check again")
+        time.sleep(20)
+    response = ''
+    while response == '':
+        try:
+            response = requests.get(url, auth=(USERNAME, API_TOKEN))
+            break
+        except:
+            print("Connection refused by the server for external_request()..")
+            print("Let me sleep for 30 seconds")
+            print("ZZzzzz...")
+            time.sleep(30)
+            print("Was a nice sleep, now let me continue...")
+            continue
     return response
 
+def is_json(myjson):
+  try:
+    json_object = json.loads(myjson)
+  except ValueError as e:
+    return False
+  return True
+
 def rate_remaining():
-    response = requests.get('https://api.github.com/rate_limit', auth=(USERNAME, API_TOKEN))
-    return response.json()['rate']['remaining']
+    page = ''
+    while page == '':
+        try:
+            page = requests.get('https://api.github.com/rate_limit', auth=(USERNAME, API_TOKEN))
+            break
+        except:
+            print("Connection refused by the server to check rate limit..")
+            print("Let me sleep for 30 seconds")
+            print("ZZzzzz...")
+            time.sleep(30)
+            print("Was a nice sleep, now let me continue...")
+            continue
+
+    return page.json()['rate']['remaining']
 
 # These are the criteria for repo selection:
 #     - Min One closed pull request
@@ -109,15 +136,16 @@ def generateRepoList(datetime_date, number_of_days, save_path):
 def save_records(records, extension):
     columns = ['PRBodySize', 'CommitSize', 'No_of_Files_Changed', 'socialDistance', 'No_of_Comments', 'timeSpentOnPR', 'repositoryAge','No_of_collaborators', 'No_of_Stars', 'No_of_Watchers', 'No_of_OpenIssues', 'No_of_followers_Submitter', 'submitterStatus', 'pullrequestDecision']
     df = pd.DataFrame.from_records(records, columns=columns)
-    df.to_csv('trial-dataset\\' + 'records'+ extension + '.csv')
+    df.to_csv('trial-dataset\\' + 'records-'+ extension + '.csv')
 
 
 def generatePRDataset(datetime_date, number_of_days, repo_list_filepath):
     x = datetime_date
     fp_repo = open(repo_list_filepath, 'r')
     repo_dict = json.loads(fp_repo.read())
-    #print(repo_dict)
-    #print(str(sum(repo_dict.values())))
+    # print(len(repo_dict))
+    # print(str(sum(repo_dict.values())))
+    # exit(42)
     records = []
     for a in range(number_of_days):
         for hr in range(24):
@@ -144,17 +172,13 @@ def generatePRDataset(datetime_date, number_of_days, repo_list_filepath):
                                         records.append(create_record(data))
                                         if len(records) % 20 == 1:
                                             print("time elapsed: {:.2f}s".format(time.time() - start_time))
-                        if len(records) == 1200:
-                            save_records((records))
-                            print("Remaining API calls" + str(rate_remaining()))
-                            exit(42)
-
+                                            print('Rate limit remaining: ' + str(rate_remaining()))
             except FileNotFoundError:
                 print(fileLocation + ' : This file does not seem to exist.')
             except Exception:
                 prettyPrint(data)
                 raise('Something went wrong. ' + Exception.args[1])
-            save_records(records, str(hr))
+            save_records(records, myDate)
         x += datetime.timedelta(days=1)
     fp_repo.close()
 
@@ -181,7 +205,7 @@ def sDistance(data):
     if user == None:
         return 0
     response = external_request(followers_url)
-    if response.ok:
+    if response.ok and is_json(response.text):
         followersList = response.json()
         for follower in followersList:
             if user == follower['login']:
@@ -200,21 +224,28 @@ def socialConnection(data):
 def pullrequestFeatures(data):
     #print('Review comments = ' + str(data['payload']['pull_request']['review_comments'])  + '\nComments = ' + str(data['payload']['pull_request']['comments']))
     No_of_Comments = data['payload']['pull_request']['review_comments'] + data['payload']['pull_request']['comments']
-    pullrequestCreatedTime =  datetime.datetime.strptime(data['payload']['pull_request']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
-    pullrequestClosedTime =  datetime.datetime.strptime(data['payload']['pull_request']['closed_at'], "%Y-%m-%dT%H:%M:%SZ")
-    differenceDelta =  pullrequestClosedTime - pullrequestCreatedTime
-    timeSpentonPR = differenceDelta.days
+    if data['payload']['pull_request']['created_at'] == None or data['payload']['pull_request']['closed_at'] == None:
+        timeSpentonPR = -1
+    else:
+        pullrequestCreatedTime =  datetime.datetime.strptime(data['payload']['pull_request']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
+        pullrequestClosedTime =  datetime.datetime.strptime(data['payload']['pull_request']['closed_at'], "%Y-%m-%dT%H:%M:%SZ")
+        differenceDelta =  pullrequestClosedTime - pullrequestCreatedTime
+        timeSpentonPR = differenceDelta.days
+
     return No_of_Comments, timeSpentonPR, data['payload']['pull_request']['created_at']
 
 def repoFeatures(data, timePRcreated):
-    repo_created = datetime.datetime.strptime(data['payload']['pull_request']['base']['repo']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
-    pr_created = datetime.datetime.strptime(timePRcreated, "%Y-%m-%dT%H:%M:%SZ")
-    repo_age_delta = pr_created - repo_created
-    repositoryAge = repo_age_delta.days
+    if data['payload']['pull_request']['created_at'] == None or timePRcreated == None:
+        repositoryAge = -1
+    else:
+        repo_created = datetime.datetime.strptime(data['payload']['pull_request']['base']['repo']['created_at'], "%Y-%m-%dT%H:%M:%SZ")
+        pr_created = datetime.datetime.strptime(timePRcreated, "%Y-%m-%dT%H:%M:%SZ")
+        repo_age_delta = pr_created - repo_created
+        repositoryAge = repo_age_delta.days
 
     repo_contributors_url = data['payload']['pull_request']['base']['repo']['contributors_url']
     response = external_request(repo_contributors_url)
-    if response.ok:
+    if response.ok and is_json(response.text):
         repo_contributors_list = response.json()
         No_of_contributors = len(repo_contributors_list)
     else:
@@ -235,7 +266,7 @@ def submitterFeatures(data, collaboratorList):
     elif 'followers_url' in user:
         user_followers_url = user['followers_url']
         response = external_request(user_followers_url)
-        if response.ok:
+        if response.ok and is_json(response.text):
             user_followers = response.json()
             No_of_followers_Submitter = len(user_followers)
         else:
@@ -280,7 +311,7 @@ def create_record(data):
 
 
 start_time = time.time()
-start_date = datetime.datetime(2015,1,1)
+start_date = datetime.datetime(2015,1,4)
 # events, n_records = explore(start_date, 15)
 # print(events)
 # print('Number of records: ' + str(n_records))
