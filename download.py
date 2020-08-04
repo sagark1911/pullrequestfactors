@@ -44,8 +44,8 @@ def download_archive(datetime_start_date, number_of_days):
         print("time elapsed: {:.2f}s".format(time.time() - start_time))
         x = x + datetime.timedelta(days=1)
 
-start_date = datetime.datetime(2015, 1, 1)
-download_archive(start_date, 1)
+start_date = datetime.datetime(2016, 1, 1)
+download_archive(start_date, 10)
 # for a in range(40):
 #     for hr in range(24):
 #         myDate = str(x.year) + '-' + string_dates(x.month) + '-' + string_dates(x.day) + '-' + str(hr)
