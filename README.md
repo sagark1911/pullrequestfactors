@@ -7,11 +7,13 @@ Repository selection criteria:
     - Remove repo that do not have use issue tracker
     - Need min three contributors
 
-Further: 
-- Exclude all open pull request
-- Gather each unique user associated with these pull requests
-- Gather all issues and all comments using API
+## Query.py file 
+Conatins script for generating repository lists and also creating 
+a dataset of pull request factors.
 
+## machine_learning.py
+Uses the pull request factors dataset to train a logistic regression model
+and print feature importance scores with p values to check statistical
+significance.
 
-Need to test the following hypothesis:
 
